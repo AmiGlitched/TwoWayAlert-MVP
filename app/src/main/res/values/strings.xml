@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Two_Way_Alert_System</string>
+    <string name="radio_button_4_text">RadioButton</string>
+    <string name="radio_button_3_text">RadioButton</string>
+    <string name="radio_button_2_text">RadioButton</string>
+    <string name="radio_button_1_text">RadioButton</string>
+    <string name="tv_type_your_message">TextView</string>
+    <string name="et_type_message">Name</string>
+    <string name="button_send_alert">SEND ALERT</string>
+</resources>

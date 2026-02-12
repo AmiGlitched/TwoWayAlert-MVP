@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    tools:context=".SendMessageActivity"
+    android:background="@color/teal_700">
+
+    <TextView
+        android:id="@+id/tv_message"
+        android:layout_width="343dp"
+        android:layout_height="50dp"
+        android:layout_gravity="center"
+        android:layout_margin="10dp"
+        android:text=" Send a Message"
+        android:textAlignment="center"
+        android:textAllCaps="true"
+        android:textAppearance="@color/black"
+        android:textColorHighlight="@color/teal_700"
+        android:textSize="30sp" />
+
+    <EditText
+        android:id="@+id/et_message"
+        android:layout_width="378dp"
+        android:layout_height="106dp"
+        android:layout_gravity="center"
+        android:layout_margin="20dp"
+        android:ems="10"
+        android:inputType="text"
+        android:hint="Type a custom message or select a pre-set text below:"
+        android:textAlignment="center"
+        android:textSize="14dp"
+        android:background="@drawable/rectangle_button"
+        />
+
+    <RadioGroup
+        android:id="@+id/radio_group"
+        android:layout_width="match_parent"
+        android:layout_height="271dp"
+        android:orientation="vertical" >
+
+
+        <RadioButton
+            android:id="@+id/radioButton1"
+            android:layout_width="378dp"
+            android:layout_height="63dp"
+            android:layout_gravity="center"
+            android:layout_margin="10dp"
+            android:checked="false"
+            android:padding="10dp"
+            android:text="HELP!"
+            android:background="@drawable/rectangle_button2"/>
+
+        <RadioButton
+            android:id="@+id/radioButton2"
+            android:layout_width="378dp"
+            android:layout_height="69dp"
+            android:layout_gravity="center"
+            android:layout_margin="10dp"
+            android:checked="false"
+            android:padding="10dp"
+            android:text="EMERGENCY: Need Urgent Assistance!"
+            android:background="@drawable/rectangle_button2"/>
+
+        <RadioButton
+            android:id="@+id/radioButton3"
+            android:layout_width="378dp"
+            android:layout_height="68dp"
+            android:layout_gravity="center"
+            android:layout_margin="10dp"
+            android:checked="false"
+            android:padding="10dp"
+            android:background="@drawable/rectangle_button2"
+            android:text="EMERGENCY: Call Emergency Services immediately! " />
+
+    </RadioGroup>
+
+    <Button
+        android:id="@+id/button_SendAlert"
+        android:layout_width="141dp"
+        android:layout_height="129dp"
+        android:layout_margin="20dp"
+        android:background="@drawable/round_button"
+        android:text="Send ALERT!"
+        android:textColor="@color/white"
+        android:textSize="25dp" />
+
+
+</LinearLayout>

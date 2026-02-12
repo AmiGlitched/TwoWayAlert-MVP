@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="@color/teal_700">
+
+
+    <TextView
+        android:id="@+id/TV_AccReading"
+        android:layout_width="261dp"
+        android:layout_height="113dp"
+        android:layout_gravity="center"
+        android:layout_margin="30px"
+        android:text="ACCELEROMETER READING:"
+        android:textAlignment="center"
+        android:textAllCaps="true"
+        android:textAppearance="@color/black"
+        android:textColor="@color/navy_blue"
+        android:textColorHighlight="@color/teal_700"
+        android:textFontWeight="3000"
+        android:textSize="30dp" />
+
+
+    <TextView
+        android:id="@+id/TV_ClickButtonText"
+        android:layout_width="307dp"
+        android:layout_height="208dp"
+        android:layout_gravity="center"
+        android:layout_margin="100px"
+        android:text="CLICK THE ALERT BUTTON TO SEND AN ALERT! "
+        android:textAlignment="center"
+        android:textAllCaps="true"
+        android:textAppearance="@color/white"
+        android:textColor="@color/navy_blue"
+        android:textColorHighlight="@color/teal_700"
+        android:textFontWeight="3000"
+        android:textSize="40dp" />
+
+    <Button
+        android:id="@+id/Button_SendAlert"
+        android:layout_width="171dp"
+        android:layout_height="163dp"
+        android:background="@drawable/round_button"
+        android:text="SEND\n ALERT!"
+        android:textColor="@color/white"
+        android:textFontWeight="3000"
+        android:textSize="30dp" />
+
+</LinearLayout>
