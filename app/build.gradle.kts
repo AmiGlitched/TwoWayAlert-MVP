@@ -9,13 +9,12 @@ android {
     compileSdk = 36
 
     defaultConfig {
+        // Uncomment and set these values
         applicationId = "com.example.two_way_alert_system"
-        minSdk = 24
+        minSdk = 24 // Set this to at least 14. 24 is a good modern choice.
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -27,20 +26,29 @@ android {
             )
         }
     }
+
+    // Consolidated buildFeatures block
+    buildFeatures {
+        viewBinding = true
+        compose = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
     kotlinOptions {
         jvmTarget = "11"
     }
-    buildFeatures {
-        compose = true
+
+    // Add the composeOptions block if you are using Jetpack Compose
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.1" // Use a version compatible with your Kotlin plugin
     }
 }
 
 dependencies {
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -61,3 +69,4 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+

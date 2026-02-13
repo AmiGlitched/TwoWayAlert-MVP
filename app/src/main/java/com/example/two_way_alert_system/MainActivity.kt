@@ -1,68 +1,51 @@
 package com.example.two_way_alert_system
 
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
-import android.widget.TextView
-import android.widget.Button
-import android.widget.Toast
-import android.content.Context
-import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import kotlin.math.sqrt
+import android.util.Log
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import com.example.two_way_alert_system.databinding.ActivityMainBinding // 1. Make sure you're using View Binding
 
+class MainActivity : AppCompatActivity() {
 
-class MainActivity : ComponentActivity(), SensorEventListener {
-    private lateinit var sensorManager: SensorManager
-    private var accelerometer: Sensor? = null
-    private val FALL_THRESHOLD = 20.0   // ALERT sent if this threshold exceeds
-
+    // 2. Declare FallDetector and ViewBinding variables
+    private lateinit var fallDetector: FallDetector
+    private lateinit var binding: ActivityMainBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        // 3. Set up View Binding
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
 
-        val sendAlertButton = findViewById<Button>(R.id.Button_SendAlert)
-        sendAlertButton.setOnClickListener {
-            val intent = Intent(this, SendMessageActivity::class.java)
-            startActivity(intent)
+        // 4. Initialize the FallDetector
+        fallDetector = FallDetector(this) {
+            // This is the code that runs when a fall is detected
+            Log.d("FallDetection", "FALL DETECTED!")
+
+            // To see the result on screen, show a Toast message.
+            // runOnUiThread is important because sensor events can come from a background thread.
+            runOnUiThread {
+                Toast.makeText(applicationContext, "Fall Detected!", Toast.LENGTH_LONG).show()
+
+                // You can also update a TextView to show the status
+                // Make sure you have a TextView with id "statusTextView" in your activity_main.xml
+                // binding.statusTextView.text = "Status: Fall Detected!"
+            }
         }
-
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
     }
-
 
     override fun onResume() {
         super.onResume()
-        if (accelerometer != null) {
-            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_NORMAL)
-        }
+        // 5. Start the detector when the app becomes active
+        fallDetector.start()
+        Log.d("FallDetection", "Fall detector started.")
     }
 
     override fun onPause() {
         super.onPause()
-        sensorManager.unregisterListener(this)
+        // 6. Stop the detector when the app is paused to save battery
+        fallDetector.stop()
+        Log.d("FallDetection", "Fall detector stopped.")
     }
-
-    override fun onSensorChanged(event: SensorEvent) {
-        val x = event.values[0]
-        val y = event.values[1]
-        val z = event.values[2]
-
-        val acceleration = sqrt((x * x + y * y + z * z).toDouble())  //// Calculates the magnitude of acceleration
-
-        // Fall Detection
-        if (acceleration > FALL_THRESHOLD) {
-            Toast.makeText(this, "FALL DETECTED! AUTOMATIC ALERT SENT TO EMERGENCY CONTACTS", Toast.LENGTH_LONG).show()
-        }
-
-        val accelerometerReading = findViewById<TextView>(R.id.TV_AccReading)
-        accelerometerReading.text ="ACCELEROMETER READING: %.2f".format(acceleration)
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { }
-
 }

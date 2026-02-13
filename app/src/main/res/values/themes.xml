@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Two_Way_Alert_System" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Use a modern Material Components theme as the parent -->
+    <style name="Theme.Two_Way_Alert_System" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- You can add custom theme attributes here if needed in the future -->
+        <!-- For example: -->
+        <!-- <item name="colorPrimary">@color/purple_500</item> -->
+        <!-- <item name="colorPrimaryVariant">@color/purple_700</item> -->
+        <!-- <item name="colorOnPrimary">@color/white</item> -->
+    </style>
 </resources>
