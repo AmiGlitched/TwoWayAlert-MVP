@@ -1,13 +1,9 @@
-package com.myapplication.app // KEEP YOUR EXACT PACKAGE NAME
+package com.myapplication.app
 
 import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -49,6 +45,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import androidx.navigation.compose.*
 import com.google.android.gms.location.LocationServices
@@ -56,26 +53,46 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.delay
-import kotlin.math.sqrt
 
-class MainActivity : ComponentActivity(), SensorEventListener {
+class MainActivity : ComponentActivity() {
 
-    private lateinit var sensorManager: SensorManager
-    private var accelerometer: Sensor? = null
-
-    private var acceleration by mutableFloatStateOf(0f)
+    // Global state so the background service can trigger the UI
     private var isCountingDown by mutableStateOf(false)
     private var countdownTimer by mutableIntStateOf(10)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        // FORCE SCREEN TO WAKE UP AND BYPASS LOCK SCREEN
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+            keyguardManager.requestDismissKeyguard(this, null)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                        android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+        }
         val prefs = getSharedPreferences("AppPrefs", MODE_PRIVATE)
+
+        // Check if the app was violently woken up by the background service
+        handleIntent(intent, prefs)
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 val navController = rememberNavController()
+                // FIRE ALARM NAVIGATION OVERRIDE
+                LaunchedEffect(isCountingDown) {
+                    if (isCountingDown && navController.currentDestination?.route != "alert") {
+                        navController.navigate("alert") {
+                            popUpTo(0) // Wipes the back history so they can't accidentally exit
+                            launchSingleTop = true
+                        }
+                    }
+                }
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
 
@@ -87,10 +104,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 }
 
                 LaunchedEffect(Unit) {
-                    permissionLauncher.launch(arrayOf(Manifest.permission.SEND_SMS, Manifest.permission.CALL_PHONE, Manifest.permission.ACCESS_FINE_LOCATION))
+                    permissionLauncher.launch(
+                        arrayOf(Manifest.permission.SEND_SMS, Manifest.permission.CALL_PHONE, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS)
+                    )
                 }
 
-                // Verify Firebase Auth State
                 val startScreen = if (FirebaseAuth.getInstance().currentUser != null && prefs.getBoolean("isLoggedIn", false)) "alert" else "auth"
 
                 Scaffold(
@@ -120,7 +138,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                             composable("profile") { ProfileScreen(navController, prefs) }
                             composable("alert") {
                                 AlertScreen(
-                                    currentGForce = acceleration, isCountingDown = isCountingDown, timeLeft = countdownTimer,
+                                    isCountingDown = isCountingDown, timeLeft = countdownTimer,
                                     onExecuteSos = { message -> executeSOS(message, prefs) }, onCancel = { cancelCountdown() }
                                 )
 
@@ -138,18 +156,21 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         }
     }
 
-    override fun onResume() { super.onResume(); accelerometer?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) } }
-    override fun onPause() { super.onPause(); sensorManager.unregisterListener(this) }
+    // This catches intents if the app is already open in the background
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent, getSharedPreferences("AppPrefs", MODE_PRIVATE))
+    }
 
-    override fun onSensorChanged(event: SensorEvent?) {
-        if (event?.sensor?.type == Sensor.TYPE_ACCELEROMETER) {
-            val x = event.values[0]; val y = event.values[1]; val z = event.values[2]
-            val gForce = sqrt((x * x + y * y + z * z).toDouble()).toFloat()
-            acceleration = gForce
-            if (gForce > 25.0f && !isCountingDown) { isCountingDown = true; countdownTimer = 10 }
+    private fun handleIntent(intent: Intent, prefs: android.content.SharedPreferences) {
+        if (intent.getBooleanExtra("FALL_DETECTED", false)) {
+            isCountingDown = true
+            countdownTimer = 10
+        }
+        if (intent.getBooleanExtra("MANUAL_SOS_TRIGGERED", false)) {
+            executeSOS("Manual Notification SOS Triggered!", prefs)
         }
     }
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun cancelCountdown() {
         isCountingDown = false; countdownTimer = 10
@@ -197,7 +218,7 @@ fun AuthScreen(navController: NavController, prefs: android.content.SharedPrefer
     var password by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
-    var isLoading by remember { mutableStateOf(false) } // Added Loading State
+    var isLoading by remember { mutableStateOf(false) }
 
     val auth = FirebaseAuth.getInstance()
     val db = FirebaseFirestore.getInstance()
@@ -232,12 +253,10 @@ fun AuthScreen(navController: NavController, prefs: android.content.SharedPrefer
                     else {
                         isLoading = true
                         if (isLoginMode) {
-                            // FIREBASE LOGIN
                             auth.signInWithEmailAndPassword(email, password).addOnCompleteListener { task ->
                                 if (task.isSuccessful) {
                                     val uid = auth.currentUser?.uid
                                     if (uid != null) {
-                                        // PULL CLOUD DATA TO LOCAL CACHE
                                         db.collection("users").document(uid).get().addOnSuccessListener { doc ->
                                             if (doc.exists()) {
                                                 prefs.edit()
@@ -250,9 +269,7 @@ fun AuthScreen(navController: NavController, prefs: android.content.SharedPrefer
                                                     .putString("c2Num", doc.getString("c2Num") ?: "")
                                                     .putBoolean("isLoggedIn", true)
                                                     .apply()
-                                            } else {
-                                                prefs.edit().putBoolean("isLoggedIn", true).apply()
-                                            }
+                                            } else { prefs.edit().putBoolean("isLoggedIn", true).apply() }
                                             navController.navigate("alert") { popUpTo("auth") { inclusive = true } }
                                         }.addOnFailureListener {
                                             prefs.edit().putBoolean("isLoggedIn", true).apply()
@@ -265,7 +282,6 @@ fun AuthScreen(navController: NavController, prefs: android.content.SharedPrefer
                                 }
                             }
                         } else {
-                            // FIREBASE REGISTER
                             auth.createUserWithEmailAndPassword(email, password).addOnCompleteListener { task ->
                                 if (task.isSuccessful) {
                                     prefs.edit().putBoolean("isLoggedIn", true).apply()
@@ -300,19 +316,102 @@ fun ProfileScreen(navController: NavController, prefs: android.content.SharedPre
     var expanded by remember { mutableStateOf(false) }
     var call112 by remember { mutableStateOf(prefs.getBoolean("call112", false)) }
 
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)).padding(24.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+    // THE TWO NEW SEPARATE TOGGLES
+    var isSosNotificationRunning by remember { mutableStateOf(prefs.getBoolean("isSosNotificationRunning", false)) }
+    var isFallDetectionRunning by remember { mutableStateOf(prefs.getBoolean("isFallDetectionRunning", false)) }
+    var showPermissionGuide by remember { mutableStateOf(false) }
 
+    fun updateBackgroundService() {
+        val serviceIntent = Intent(navController.context, SosForegroundService::class.java).apply {
+            putExtra("ENABLE_FALL_DETECTION", isFallDetectionRunning)
+        }
+        if (isSosNotificationRunning || isFallDetectionRunning) {
+            ContextCompat.startForegroundService(navController.context, serviceIntent)
+        } else {
+            navController.context.stopService(serviceIntent)
+        }
+    }
+
+    // THE PERMISSION TUTORIAL POPUP
+    if (showPermissionGuide) {
+        AlertDialog(
+            onDismissRequest = { showPermissionGuide = false },
+            title = { Text("Setup Required", fontWeight = FontWeight.Bold) },
+            text = {
+                Text("To automatically wake up your phone during a fall, Android requires a special permission.\n\n1. We will open Settings.\n2. Find 'Two Way Alert' in the list.\n3. Turn ON 'Allow display over other apps'.\n4. Press back to return here.")
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showPermissionGuide = false
+                    val intent = Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${navController.context.packageName}"))
+                    navController.context.startActivity(intent)
+                }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text("Open Settings") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPermissionGuide = false }) { Text("Cancel", color = Color.Gray) }
+            },
+            containerColor = Color(0xFF1E1E1E), textContentColor = Color.White, titleContentColor = Color.White
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF121212)).padding(24.dp).verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Your Profile", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White)
             TextButton(onClick = {
-                // FIREBASE LOGOUT
                 FirebaseAuth.getInstance().signOut()
                 prefs.edit().clear().apply()
+                navController.context.stopService(Intent(navController.context, SosForegroundService::class.java))
                 navController.navigate("auth") { popUpTo(0) }
             }) { Text("Logout", color = Color.Red) }
         }
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // TOGGLE 1: Persistent SOS Button (No sensor, no special permissions needed)
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), modifier = Modifier.fillMaxWidth().shadow(4.dp)) {
+            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Quick-Access SOS Button", fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("Pins an SOS button to your notifications for instant access.", color = Color.Gray, fontSize = 12.sp)
+                }
+                Switch(
+                    checked = isSosNotificationRunning,
+                    onCheckedChange = {
+                        isSosNotificationRunning = it
+                        prefs.edit().putBoolean("isSosNotificationRunning", it).apply()
+                        updateBackgroundService()
+                    },
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color.Red, checkedTrackColor = Color(0xFF5C1C1C))
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // TOGGLE 2: Fall Detection (Uses sensor, needs Overlay permission)
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), modifier = Modifier.fillMaxWidth().shadow(4.dp)) {
+            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("24/7 Fall Detection", fontWeight = FontWeight.Bold, color = Color.Green)
+                    Text("Monitors for hard drops even when the app is completely closed.", color = Color.Gray, fontSize = 12.sp)
+                }
+                Switch(
+                    checked = isFallDetectionRunning,
+                    onCheckedChange = { isChecked ->
+                        if (isChecked && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !android.provider.Settings.canDrawOverlays(navController.context)) {
+                            showPermissionGuide = true // Trigger the tutorial popup
+                        } else {
+                            isFallDetectionRunning = isChecked
+                            prefs.edit().putBoolean("isFallDetectionRunning", isChecked).apply()
+                            updateBackgroundService()
+                        }
+                    },
+                    colors = SwitchDefaults.colors(checkedThumbColor = Color.Green, checkedTrackColor = Color(0xFF1B5E20))
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
 
+        // User Data Fields
         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Full Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         Spacer(modifier = Modifier.height(12.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -345,17 +444,16 @@ fun ProfileScreen(navController: NavController, prefs: android.content.SharedPre
         Button(
             onClick = {
                 prefs.edit().putString("userName", name).putString("userAge", age).putString("userSex", sex).putString("vitalContext", vitalContext).putBoolean("call112", call112).apply()
-
-                // PUSH TO FIREBASE FIRESTORE
                 val uid = FirebaseAuth.getInstance().currentUser?.uid
                 if (uid != null) {
                     val userData = hashMapOf("name" to name, "age" to age, "sex" to sex, "vitalContext" to vitalContext, "call112" to call112)
                     FirebaseFirestore.getInstance().collection("users").document(uid).set(userData, SetOptions.merge())
                 }
-                Toast.makeText(navController.context, "Profile Saved to Cloud", Toast.LENGTH_SHORT).show()
+                Toast.makeText(navController.context, "Profile Saved. Go to Contacts next!", Toast.LENGTH_LONG).show()
+                navController.navigate("contacts") // Forces the onboarding flow naturally
             },
-            modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
-        ) { Text("Save Changes") }
+            modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+        ) { Text("Save & Next ->", color = Color.White) }
     }
 }
 
@@ -374,8 +472,6 @@ fun ContactsScreen(navController: NavController, prefs: android.content.SharedPr
         Button(
             onClick = {
                 prefs.edit().putString("c1Num", c1Num).putString("c2Num", c2Num).apply()
-
-                // PUSH TO FIREBASE FIRESTORE
                 val uid = FirebaseAuth.getInstance().currentUser?.uid
                 if (uid != null) {
                     val contactData = hashMapOf("c1Num" to c1Num, "c2Num" to c2Num)
@@ -389,23 +485,18 @@ fun ContactsScreen(navController: NavController, prefs: android.content.SharedPr
 }
 
 @Composable
-fun AlertScreen(currentGForce: Float, isCountingDown: Boolean, timeLeft: Int, onExecuteSos: (String) -> Unit, onCancel: () -> Unit) {
+fun AlertScreen(isCountingDown: Boolean, timeLeft: Int, onExecuteSos: (String) -> Unit, onCancel: () -> Unit) {
     var showPresetsDialog by remember { mutableStateOf(false) }
-    val progressTarget = (currentGForce / 25f).coerceIn(0f, 1f)
-    val animatedProgress by animateFloatAsState(targetValue = progressTarget, label = "GForceMeter")
-    val meterColor = if (progressTarget > 0.8f) Color.Red else if (progressTarget > 0.4f) Color.Yellow else Color.Green
 
     Box(modifier = Modifier.fillMaxSize().background(Color(0xFF121212))) {
         Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Text("Accelerometer Load", color = Color.Gray, fontSize = 14.sp)
-            Text("${String.format("%.1f", currentGForce)} G", color = meterColor, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            LinearProgressIndicator(progress = animatedProgress, modifier = Modifier.fillMaxWidth(0.6f).height(12.dp).padding(top = 8.dp, bottom = 48.dp).clip(RoundedCornerShape(6.dp)), color = meterColor, trackColor = Color.DarkGray)
 
             if (isCountingDown) {
                 Text("FALL DETECTED!", color = Color.Red, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
                 Text("Dispatching SOS in $timeLeft", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(bottom = 48.dp))
                 Button(onClick = onCancel, colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth(0.6f).height(60.dp)) { Text("I'M OKAY (CANCEL)", fontSize = 18.sp, color = Color.White) }
             } else {
+                Text("System Ready", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.padding(bottom = 32.dp))
                 Button(onClick = { showPresetsDialog = true }, shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)), modifier = Modifier.size(220.dp).shadow(12.dp, CircleShape)) { Text("SOS", fontSize = 56.sp, color = Color.White, fontWeight = FontWeight.ExtraBold) }
             }
         }
