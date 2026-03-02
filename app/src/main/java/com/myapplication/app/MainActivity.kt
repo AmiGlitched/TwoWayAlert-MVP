@@ -17,7 +17,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -35,7 +34,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -56,12 +54,14 @@ import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
-    // Global state so the background service can trigger the UI
     private var isCountingDown by mutableStateOf(false)
     private var countdownTimer by mutableIntStateOf(10)
+    private var liveGForce by mutableFloatStateOf(0f)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val prefs = getSharedPreferences("AppPrefs", MODE_PRIVATE)
+
         // FORCE SCREEN TO WAKE UP AND BYPASS LOCK SCREEN
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
@@ -76,23 +76,25 @@ class MainActivity : ComponentActivity() {
                         android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
             )
         }
-        val prefs = getSharedPreferences("AppPrefs", MODE_PRIVATE)
 
-        // Check if the app was violently woken up by the background service
+        // LIVE UI SENSOR MONITOR
+        val sensorManager = getSystemService(Context.SENSOR_SERVICE) as android.hardware.SensorManager
+        val accelerometer = sensorManager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+        sensorManager.registerListener(object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(event: android.hardware.SensorEvent?) {
+                if (event != null && event.sensor.type == android.hardware.Sensor.TYPE_ACCELEROMETER) {
+                    val x = event.values[0]; val y = event.values[1]; val z = event.values[2]
+                    liveGForce = kotlin.math.sqrt((x * x + y * y + z * z).toDouble()).toFloat()
+                }
+            }
+            override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
+        }, accelerometer, android.hardware.SensorManager.SENSOR_DELAY_UI)
+
         handleIntent(intent, prefs)
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 val navController = rememberNavController()
-                // FIRE ALARM NAVIGATION OVERRIDE
-                LaunchedEffect(isCountingDown) {
-                    if (isCountingDown && navController.currentDestination?.route != "alert") {
-                        navController.navigate("alert") {
-                            popUpTo(0) // Wipes the back history so they can't accidentally exit
-                            launchSingleTop = true
-                        }
-                    }
-                }
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
 
@@ -107,6 +109,16 @@ class MainActivity : ComponentActivity() {
                     permissionLauncher.launch(
                         arrayOf(Manifest.permission.SEND_SMS, Manifest.permission.CALL_PHONE, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS)
                     )
+                }
+
+                // FIRE ALARM NAVIGATION OVERRIDE
+                LaunchedEffect(isCountingDown) {
+                    if (isCountingDown && navController.currentDestination?.route != "alert") {
+                        navController.navigate("alert") {
+                            popUpTo(0)
+                            launchSingleTop = true
+                        }
+                    }
                 }
 
                 val startScreen = if (FirebaseAuth.getInstance().currentUser != null && prefs.getBoolean("isLoggedIn", false)) "alert" else "auth"
@@ -138,8 +150,11 @@ class MainActivity : ComponentActivity() {
                             composable("profile") { ProfileScreen(navController, prefs) }
                             composable("alert") {
                                 AlertScreen(
-                                    isCountingDown = isCountingDown, timeLeft = countdownTimer,
-                                    onExecuteSos = { message -> executeSOS(message, prefs) }, onCancel = { cancelCountdown() }
+                                    isCountingDown = isCountingDown,
+                                    timeLeft = countdownTimer,
+                                    currentGForce = liveGForce,
+                                    onExecuteSos = { message -> executeSOS(message, prefs) },
+                                    onCancel = { cancelCountdown() }
                                 )
 
                                 LaunchedEffect(isCountingDown) {
@@ -156,7 +171,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // This catches intents if the app is already open in the background
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent, getSharedPreferences("AppPrefs", MODE_PRIVATE))
@@ -187,7 +201,8 @@ class MainActivity : ComponentActivity() {
         val fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-                val locationString = if (location != null) "https://maps.google.com/?q=$${location.latitude},${location.longitude}" else "Location unavailable."
+                // FIXED GOOGLE MAPS URL
+                val locationString = if (location != null) "https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}" else "Location unavailable."
                 val finalMessage = "SOS ALERT: $emergencyType\nContext: $vitalContext\nLoc: $locationString"
 
                 val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) getSystemService(SmsManager::class.java) else SmsManager.getDefault()
@@ -246,10 +261,10 @@ fun AuthScreen(navController: NavController, prefs: android.content.SharedPrefer
             Button(
                 onClick = {
                     val isEmailValid = Patterns.EMAIL_ADDRESS.matcher(email).matches()
-                    val isPasswordValid = password.length >= 8 && password.any { !it.isLetterOrDigit() }
+                    val isPasswordValid = password.length >= 8
 
                     if (!isEmailValid) errorMessage = "Invalid email."
-                    else if (!isPasswordValid) errorMessage = "Password needs 8+ chars & 1 special."
+                    else if (!isPasswordValid) errorMessage = "Password needs 8+ chars."
                     else {
                         isLoading = true
                         if (isLoginMode) {
@@ -316,7 +331,6 @@ fun ProfileScreen(navController: NavController, prefs: android.content.SharedPre
     var expanded by remember { mutableStateOf(false) }
     var call112 by remember { mutableStateOf(prefs.getBoolean("call112", false)) }
 
-    // THE TWO NEW SEPARATE TOGGLES
     var isSosNotificationRunning by remember { mutableStateOf(prefs.getBoolean("isSosNotificationRunning", false)) }
     var isFallDetectionRunning by remember { mutableStateOf(prefs.getBoolean("isFallDetectionRunning", false)) }
     var showPermissionGuide by remember { mutableStateOf(false) }
@@ -332,7 +346,6 @@ fun ProfileScreen(navController: NavController, prefs: android.content.SharedPre
         }
     }
 
-    // THE PERMISSION TUTORIAL POPUP
     if (showPermissionGuide) {
         AlertDialog(
             onDismissRequest = { showPermissionGuide = false },
@@ -366,7 +379,6 @@ fun ProfileScreen(navController: NavController, prefs: android.content.SharedPre
         }
         Spacer(modifier = Modifier.height(16.dp))
 
-        // TOGGLE 1: Persistent SOS Button (No sensor, no special permissions needed)
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), modifier = Modifier.fillMaxWidth().shadow(4.dp)) {
             Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -386,7 +398,6 @@ fun ProfileScreen(navController: NavController, prefs: android.content.SharedPre
         }
         Spacer(modifier = Modifier.height(12.dp))
 
-        // TOGGLE 2: Fall Detection (Uses sensor, needs Overlay permission)
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), modifier = Modifier.fillMaxWidth().shadow(4.dp)) {
             Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -397,7 +408,7 @@ fun ProfileScreen(navController: NavController, prefs: android.content.SharedPre
                     checked = isFallDetectionRunning,
                     onCheckedChange = { isChecked ->
                         if (isChecked && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !android.provider.Settings.canDrawOverlays(navController.context)) {
-                            showPermissionGuide = true // Trigger the tutorial popup
+                            showPermissionGuide = true
                         } else {
                             isFallDetectionRunning = isChecked
                             prefs.edit().putBoolean("isFallDetectionRunning", isChecked).apply()
@@ -411,7 +422,6 @@ fun ProfileScreen(navController: NavController, prefs: android.content.SharedPre
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // User Data Fields
         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Full Name") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         Spacer(modifier = Modifier.height(12.dp))
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -450,7 +460,7 @@ fun ProfileScreen(navController: NavController, prefs: android.content.SharedPre
                     FirebaseFirestore.getInstance().collection("users").document(uid).set(userData, SetOptions.merge())
                 }
                 Toast.makeText(navController.context, "Profile Saved. Go to Contacts next!", Toast.LENGTH_LONG).show()
-                navController.navigate("contacts") // Forces the onboarding flow naturally
+                navController.navigate("contacts")
             },
             modifier = Modifier.fillMaxWidth().height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
         ) { Text("Save & Next ->", color = Color.White) }
@@ -485,7 +495,7 @@ fun ContactsScreen(navController: NavController, prefs: android.content.SharedPr
 }
 
 @Composable
-fun AlertScreen(isCountingDown: Boolean, timeLeft: Int, onExecuteSos: (String) -> Unit, onCancel: () -> Unit) {
+fun AlertScreen(isCountingDown: Boolean, timeLeft: Int, currentGForce: Float, onExecuteSos: (String) -> Unit, onCancel: () -> Unit) {
     var showPresetsDialog by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize().background(Color(0xFF121212))) {
@@ -496,7 +506,9 @@ fun AlertScreen(isCountingDown: Boolean, timeLeft: Int, onExecuteSos: (String) -
                 Text("Dispatching SOS in $timeLeft", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(bottom = 48.dp))
                 Button(onClick = onCancel, colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth(0.6f).height(60.dp)) { Text("I'M OKAY (CANCEL)", fontSize = 18.sp, color = Color.White) }
             } else {
-                Text("System Ready", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.padding(bottom = 32.dp))
+                Text("System Ready", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
+                Text("Live Force: ${String.format(java.util.Locale.US, "%.1f", currentGForce)} G", color = Color.Green, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 32.dp))
+
                 Button(onClick = { showPresetsDialog = true }, shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)), modifier = Modifier.size(220.dp).shadow(12.dp, CircleShape)) { Text("SOS", fontSize = 56.sp, color = Color.White, fontWeight = FontWeight.ExtraBold) }
             }
         }
