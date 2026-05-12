@@ -59,6 +59,10 @@ class MainActivity : ComponentActivity() {
     // Global state so the background service can trigger the UI
     private var isCountingDown by mutableStateOf(false)
     private var countdownTimer by mutableIntStateOf(10)
+    //////
+    private var predictionResult by mutableStateOf("")
+
+    /////
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,7 +81,15 @@ class MainActivity : ComponentActivity() {
             )
         }
         val prefs = getSharedPreferences("AppPrefs", MODE_PRIVATE)
+///
+        // NEW: Handle intent extras for prediction
+        val result = intent.getStringExtra("PREDICTION_RESULT")
+        if (result != null) {
+            predictionResult = result
+        }
 
+
+        ///
         // Check if the app was violently woken up by the background service
         handleIntent(intent, prefs)
 
@@ -138,7 +150,7 @@ class MainActivity : ComponentActivity() {
                             composable("profile") { ProfileScreen(navController, prefs) }
                             composable("alert") {
                                 AlertScreen(
-                                    isCountingDown = isCountingDown, timeLeft = countdownTimer,
+                                    isCountingDown = isCountingDown, timeLeft = countdownTimer, predictionResult = predictionResult,   //
                                     onExecuteSos = { message -> executeSOS(message, prefs) }, onCancel = { cancelCountdown() }
                                 )
 
@@ -485,7 +497,7 @@ fun ContactsScreen(navController: NavController, prefs: android.content.SharedPr
 }
 
 @Composable
-fun AlertScreen(isCountingDown: Boolean, timeLeft: Int, onExecuteSos: (String) -> Unit, onCancel: () -> Unit) {
+fun AlertScreen(isCountingDown: Boolean, timeLeft: Int,predictionResult: String,  onExecuteSos: (String) -> Unit, onCancel: () -> Unit) {
     var showPresetsDialog by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize().background(Color(0xFF121212))) {
@@ -494,6 +506,8 @@ fun AlertScreen(isCountingDown: Boolean, timeLeft: Int, onExecuteSos: (String) -
             if (isCountingDown) {
                 Text("FALL DETECTED!", color = Color.Red, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
                 Text("Dispatching SOS in $timeLeft", color = Color.White, fontSize = 22.sp, modifier = Modifier.padding(bottom = 48.dp))
+                Text("Prediction: $predictionResult", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+
                 Button(onClick = onCancel, colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth(0.6f).height(60.dp)) { Text("I'M OKAY (CANCEL)", fontSize = 18.sp, color = Color.White) }
             } else {
                 Text("System Ready", color = Color.Gray, fontSize = 14.sp, modifier = Modifier.padding(bottom = 32.dp))
