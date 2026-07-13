@@ -1,5 +1,6 @@
 package com.myapplication.app.ui.theme
 
+<<<<<<< HEAD
 import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -31,10 +32,29 @@ private val LightColorScheme = lightColorScheme(
     onBackground = Color(0xFF1C1B1F),
     onSurface = Color(0xFF1C1B1F),
     */
+=======
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+
+private val TintedGlassDarkScheme = darkColorScheme(
+    primary = AccentRed,
+    onPrimary = TextPrimary,
+    secondary = AccentGreen,
+    background = CanvasDeep,
+    onBackground = TextPrimary,
+    surface = CanvasElevated,
+    onSurface = TextPrimary,
+    surfaceVariant = GlassFillLight,
+    onSurfaceVariant = TextSecondary,
+    outline = GlassBorder,
+    error = AccentRed
+>>>>>>> master
 )
 
 @Composable
 fun TwoWayAlertTheme(
+<<<<<<< HEAD
     darkTheme: Boolean = isSystemInDarkTheme(),
     // Dynamic color is available on Android 12+
     dynamicColor: Boolean = true,
@@ -52,6 +72,12 @@ fun TwoWayAlertTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
+=======
+    content: @Composable () -> Unit
+) {
+    MaterialTheme(
+        colorScheme = TintedGlassDarkScheme,
+>>>>>>> master
         typography = Typography,
         content = content
     )
