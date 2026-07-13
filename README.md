@@ -1,66 +1,53 @@
-# Two-Way Alert
+Two-Way Alert
 
-A personal safety Android app that detects falls automatically and lets you trigger an SOS manually — via a button, a shake, a volume-button triple-press, or a power-button triple-press. When triggered, it texts your emergency contacts your live location, optionally calls them (or 112), and can sound a siren + strobe the camera flash to draw attention.
+A personal safety app for Android that doesn't wait for you to open it.
 
-Built with Kotlin + Jetpack Compose, Firebase (Auth + Firestore), and a TensorFlow Lite model for on-device fall detection.
+Two-Way Alert watches for falls in the background, and lets you fire off an SOS a bunch of different ways — tap the button, shake your phone, triple-press a volume key, even triple-press the power button while the screen's locked. Once triggered, it texts your emergency contacts your live location, calls someone (or 112, if you'd rather), and can sound an alarm and flash your camera light to get attention nearby.
 
-## Features
+We built this as a college project, but tried to make it feel like something you'd actually want on your phone rather than a checklist of features bolted together.
 
-- **Automatic fall detection** — a TFLite model classifies accelerometer data in the background and fires a 10-second cancellable countdown before alerting contacts.
-- **Manual SOS** — big red button with preset emergency types (Medical, Theft, General).
-- **Alternate triggers** — shake the phone, triple-press either volume key, or triple-press power (screen off 3x) to fire an alert without opening the app.
-- **Dynamic contact list** — add/remove as many emergency contacts as you want, synced to Firestore.
-- **SOS History** — every trigger is logged locally with timestamp, type, and a location link.
-- **Loud / Silent mode** — Loud mode sounds a siren and strobes the flashlight; Silent mode skips both.
-- **Periodic tracking SMS** — after an alert, sends a follow-up location text every N seconds for up to 10 minutes.
-- **Custom SOS message template** — personalize what your contacts receive.
-- **Dial 112 option** — call emergency services instead of your primary contact.
+What it actually does
 
-## Tech Stack
+Getting an alert out
 
-- Kotlin, Jetpack Compose, Material 3
-- Firebase Authentication + Cloud Firestore
-- TensorFlow Lite (on-device fall classification)
-- Google Play Services (Fused Location Provider)
-- Android `SensorManager` (accelerometer), `CameraManager` (torch strobe), `ToneGenerator` (siren)
 
-## Project Structure
+Manual SOS with three quick presets (Medical, Theft/Robbery, General)
+On-device fall detection using a TensorFlow Lite model reading the accelerometer — no cloud call, no lag
+Shake-to-trigger, separate from the fall detector
+Volume button triple-press and power button triple-press, both work from the lock screen
+A 10-second "I'm okay" cancel window on anything that could go off by accident
+Long-press the SOS button for quicker options — silent alarm, direct call to contacts
 
-```
-app/src/main/java/com/myapplication/app/
-├── MainActivity.kt              # Nav host + all screens (Auth, Profile, Contacts, Alert, History)
-├── SosForegroundService.kt      # Background fall/shake/power-button detection
-├── model/
-│   ├── Contact.kt
-│   └── SosHistoryEntry.kt
-├── ml/
-│   └── FallDetectionModel.kt    # TFLite interpreter wrapper
-├── utils/
-│   ├── ContactStore.kt          # Contact list persistence (SharedPreferences + Firestore)
-│   ├── HistoryStore.kt          # SOS history persistence
-│   ├── SirenTorch.kt            # Siren + torch strobe controller
-│   └── Preprocessor.kt          # Feature normalization for the fall model
-└── ui/theme/                    # Compose theme (Color.kt, Theme.kt, Type.kt)
-```
 
-## Setup
+What happens when it fires
 
-1. Clone the repo and open it in Android Studio.
-2. Add your own `google-services.json` to `app/` (Firebase project with Auth + Firestore enabled).
-3. Make sure `fall_verification.tflite` is present in `app/src/main/assets/`.
-4. Sync Gradle — this pulls in the TensorFlow Lite dependency (`org.tensorflow:tensorflow-lite`) among others.
-5. Run on a physical device for full sensor/SMS/call functionality (some features are limited or unavailable on emulators).
 
-## Required Permissions
+SMS to every saved contact with a live Google Maps link
+A call to your primary contact, or straight to 112 if that's what you've set
+Loud Mode: siren + camera flash strobe. Silent Mode: neither, if that's not the moment for noise
+Follow-up location texts every so often after the initial alert, for as long as you set it to
+Everything gets logged — you can see your own alert history later
 
-`SEND_SMS`, `CALL_PHONE`, `ACCESS_FINE_LOCATION`, `POST_NOTIFICATIONS`, `CAMERA` — all requested at first launch.
 
-## Known Limitations
+Setup that actually matters
 
-- Alternate triggers only fire location + contacts alerts; they don't currently share the 10-second cancel window that fall detection has.
-- Periodic tracking SMS runs on a Handler loop in `MainActivity` and stops if the app process is killed outright (not just backgrounded).
-- Power-button trigger detection is based on `ACTION_SCREEN_OFF` timing and can take a try or two to time correctly.
 
-## Contributors
+We ask for your name, age, sex, and why you need the app before you even sign in — because an elderly parent's app should behave differently than a college student walking home alone
+If you're setting this up for someone over 60, Comfort Mode switches on automatically — bigger text, bigger buttons, fewer things to accidentally mess with. It's a toggle, not a locked mode
+You can't finish setup without adding at least one emergency contact, unless you'd rather every alert just call 112 directly. One or the other, not neither
 
-Built as a group assignment project.
+
+Built with
+
+
+Kotlin + Jetpack Compose
+Firebase Auth + Firestore
+TensorFlow Lite (on-device, nothing leaves the phone for the fall detection itself)
+Google Play Services location
+
+
+Running it yourself
+
+You'll need your own google-services.json dropped into app/ — Firebase Auth and Firestore both need to be turned on in that project. The fall detection model (fall_verification.tflite) needs to sit in app/src/main/assets/. After that it's a normal Gradle sync and run.
+
+Test it on a real phone if you can. The sensor triggers, SMS, and calling don't really mean anything on an emulator.
