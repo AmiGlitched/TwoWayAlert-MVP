@@ -38,12 +38,9 @@ android {
     buildFeatures {
         compose = true
     }
-<<<<<<< HEAD
-=======
     androidResources {
         noCompress += "tflite"
     }
->>>>>>> master
 }
 
 dependencies {
@@ -72,8 +69,7 @@ dependencies {
 // Firebase Authentication and Cloud Firestore
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
-<<<<<<< HEAD
-=======
+
     implementation("org.tensorflow:tensorflow-lite:2.17.0")
->>>>>>> master
+
 }

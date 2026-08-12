@@ -2,41 +2,11 @@ package com.myapplication.app.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
-<<<<<<< HEAD
-=======
 import androidx.compose.ui.text.font.Font
->>>>>>> master
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-<<<<<<< HEAD
-// Set of Material typography styles to start with
-val Typography = Typography(
-    bodyLarge = TextStyle(
-        fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Normal,
-        fontSize = 16.sp,
-        lineHeight = 24.sp,
-        letterSpacing = 0.5.sp
-    )
-    /* Other default text styles to override
-    titleLarge = TextStyle(
-        fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Normal,
-        fontSize = 22.sp,
-        lineHeight = 28.sp,
-        letterSpacing = 0.sp
-    ),
-    labelSmall = TextStyle(
-        fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        lineHeight = 16.sp,
-        letterSpacing = 0.5.sp
-    )
-    */
-=======
 // Using the platform's variable-weight system font family (sans-serif / sans-serif-medium) —
 // it's genuinely one of the more legible fonts already on-device, no extra asset needed.
 // If you want Inter/SF-Pro-style rounded look instead: drop the .ttf files into res/font/ and
@@ -76,5 +46,4 @@ val Typography = Typography(
         fontFamily = AppFontFamily, fontWeight = FontWeight.Medium,
         fontSize = 12.sp, lineHeight = 16.sp, letterSpacing = 0.4.sp
     )
->>>>>>> master
 )

@@ -35,17 +35,10 @@ class FallDetectionModel(context: Context) {
         for (i in array.indices) {
             if (array[i] > array[maxIndex]) maxIndex = i
         }
-<<<<<<< HEAD
-        return maxIndex}
-
-
-
-=======
         return maxIndex
     }
 
     fun close() {
         interpreter.close()
     }
->>>>>>> master
 }
