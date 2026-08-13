@@ -19,6 +19,12 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+
+    androidResources{
+        noCompress += listOf("fst", "mdl", "txt", "conf", "raw", "slurp")
+    }
+
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -37,6 +43,7 @@ android {
     }
     buildFeatures {
         compose = true
+        mlModelBinding = true
     }
     androidResources {
         noCompress += "tflite"
@@ -71,5 +78,15 @@ dependencies {
     implementation("com.google.firebase:firebase-firestore")
 
     implementation("org.tensorflow:tensorflow-lite:2.17.0")
+
+    // Vosk Speech Recognition Toolkit
+    implementation ("com.alphacephei:vosk-android:0.3.47")
+    implementation ("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+
+    implementation(libs.jna){
+        artifact{
+            type = "aar"
+        }
+    }
 
 }
