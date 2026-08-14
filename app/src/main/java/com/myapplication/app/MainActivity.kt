@@ -109,6 +109,10 @@ import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.sqrt
+import java.util.Locale
+import android.util.Log
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.material.icons.outlined.RecordVoiceOver
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 class MainActivity : ComponentActivity() {
@@ -160,6 +164,10 @@ class MainActivity : ComponentActivity() {
         ///
         // Check if the app was violently woken up by the background service
         handleIntent(intent, prefs)
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED){
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 100)
+        }
 
         setContent {
             TwoWayAlertTheme {
@@ -390,6 +398,22 @@ class MainActivity : ComponentActivity() {
             isCountingDown = true
             countdownTimer = 10
         }
+
+        if (intent.getBooleanExtra("VOICE_SOS_TRIGGERED", false)) {
+            val reason = intent.getStringExtra("SOS_REASON")?: "Voice Assisted SOS Alarm"
+            val sosKeywordText = intent.getStringExtra("SOS_KEYWORD_TEXT")?: ""
+            val emergencyType = if(sosKeywordText.isNotBlank()){
+                "$reason \nSOS Keyword Detected: $sosKeywordText"
+            } else{
+                reason
+            }
+            executeSOS(emergencyType, prefs)
+        }
+
+        if (intent.getBooleanExtra("VOICE_SOS_CANCELLED", false)) {
+            cancelCountdown()
+        }
+
 
     }
 
@@ -717,12 +741,13 @@ fun AlertFeaturesScreen(
     var powerButtonTriggerEnabled by remember { mutableStateOf(prefs.getBoolean("triggerPowerButton", false)) }
 
     fun updateBackgroundService() {
+        val listeningForKeyword = prefs.getBoolean("listeningForKeyword", false)
         val serviceIntent = Intent(navController.context, SosForegroundService::class.java).apply {
             putExtra("ENABLE_FALL_DETECTION", isFallDetectionRunning)
             putExtra("ENABLE_SHAKE_TRIGGER", shakeTriggerEnabled)
             putExtra("ENABLE_POWER_BUTTON_TRIGGER", powerButtonTriggerEnabled)
         }
-        if (isSosNotificationRunning || isFallDetectionRunning || shakeTriggerEnabled || powerButtonTriggerEnabled) {
+        if (isSosNotificationRunning || isFallDetectionRunning || shakeTriggerEnabled || powerButtonTriggerEnabled || listeningForKeyword) {
 
             ContextCompat.startForegroundService(navController.context, serviceIntent)
         } else {
@@ -796,6 +821,41 @@ fun AlertFeaturesScreen(
             }
             Spacer(modifier = Modifier.height(12.dp))
         }
+
+        // TOGGLE 3 - SOS Voice Assistance
+        var listeningForKeyword by remember {mutableStateOf( prefs.getBoolean("listeningForKeyword",false)) }
+        val voiceAssistanceTile = Triple(Icons.Outlined.RecordVoiceOver, "SOS Voice Assistance" to "Post Fall Voice Monitoring is on by default. \nTurn on SOS Voice Assistance to continuously monitor for SOS keywords."
+        ) { checked: Boolean ->
+
+            listeningForKeyword = checked
+            prefs.edit().putBoolean("listeningForKeyword", checked).apply()
+
+            val serviceIntent = Intent(navController.context, SosForegroundService::class.java).apply {
+                action = if (checked) {
+                    SosForegroundService.ACTION_START_CONTINUOUS_VOICE_MONITORING
+                } else {
+                    SosForegroundService.ACTION_POST_FALL_MONITORING_ONLY
+                }
+                putExtra("ENABLE_FALL_DETECTION", isFallDetectionRunning)
+            }
+
+            if (isFallDetectionRunning || listeningForKeyword) {
+                ContextCompat.startForegroundService(navController.context, serviceIntent)
+            } else {
+                val stopIntent = Intent(navController.context, SosForegroundService::class.java).apply {
+                    action = SosForegroundService.ACTION_STOP_SERVICE
+                }
+                ContextCompat.startForegroundService(navController.context, stopIntent)
+            }
+        }
+
+        if (comfortModeEnabled) {
+            FeatureToggleTile(icon = voiceAssistanceTile.first, title = voiceAssistanceTile.second.first, subtitle = voiceAssistanceTile.second.second, enabled = listeningForKeyword, modifier = Modifier.fillMaxWidth(), onToggle = voiceAssistanceTile.third)
+        } else {
+            FeatureToggleTile(icon = voiceAssistanceTile.first, title = voiceAssistanceTile.second.first, subtitle = voiceAssistanceTile.second.second, enabled = listeningForKeyword, modifier = Modifier.fillMaxWidth(), onToggle = voiceAssistanceTile.third)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
 
         val secondaryTilePairs = listOf(
             Triple(Icons.Outlined.WarningAmber, "Shake to Trigger" to "Firmly shake the phone to fire an alert.") { checked: Boolean ->
