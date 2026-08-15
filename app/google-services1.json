@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "452352773104",
-    "project_id": "twowayalert-b6cc1",
-    "storage_bucket": "twowayalert-b6cc1.firebasestorage.app"
+    "project_number": "388296948111",
+    "project_id": "twowayalert",
+    "storage_bucket": "twowayalert.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:452352773104:android:c189106d716d60d5fcab35",
+        "mobilesdk_app_id": "1:388296948111:android:d9cb42a0c996bec6b8b3fa",
         "android_client_info": {
           "package_name": "com.myapplication.app"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyB_YaofxBziWKHuZbXRmJD2oaQ242j1BRY"
+          "current_key": "AIzaSyDR12sGCBy0qNSJpWaAfXT1MEap_eE-5mk"
         }
       ],
       "services": {
