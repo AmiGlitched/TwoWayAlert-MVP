@@ -113,6 +113,7 @@ import java.util.Locale
 import android.util.Log
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.material.icons.outlined.RecordVoiceOver
+import com.google.firebase.Timestamp
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 class MainActivity : ComponentActivity() {
@@ -126,7 +127,7 @@ class MainActivity : ComponentActivity() {
     private var predictionResult by mutableStateOf("")
 
     /////
-
+    private var currentAlertId: String? = null
 
     // volume-button triple-click trigger tracking
     private val volumePressTimestamps = mutableListOf<Long>()
@@ -426,6 +427,7 @@ class MainActivity : ComponentActivity() {
         Toast.makeText(this, "False Alarm Cancelled", Toast.LENGTH_SHORT).show()
     }
 
+
     private fun executeSOS(emergencyType: String, prefs: android.content.SharedPreferences) {
         val contacts = ContactStore.load(prefs).map { it.phone }.filter { it.isNotBlank() }
         if (contacts.isEmpty()) { Toast.makeText(this, "No contacts saved!", Toast.LENGTH_LONG).show(); return }
@@ -434,6 +436,12 @@ class MainActivity : ComponentActivity() {
         val vitalContext = prefs.getString("vitalContext", "None") ?: "None"
         val silentMode = prefs.getBoolean("silentMode", false)
         val customTemplate = prefs.getString("customMessageTemplate", "") ?: ""
+
+        // Create the live dashboard doc up front so we have the ID/link ready
+        // before the first SMS goes out.
+        val alertId = java.util.UUID.randomUUID().toString().replace("-", "")
+        currentAlertId = alertId
+        createFirestoreAlert(alertId, emergencyType, vitalContext, prefs)
 
         // Loud mode: siren + torch strobe until cancelled or the SMS/call flow below finishes kicking off
         if (!silentMode) {
@@ -445,33 +453,46 @@ class MainActivity : ComponentActivity() {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             fusedLocationClient.lastLocation
                 .addOnSuccessListener { location ->
+                    updateFirestoreLocation(alertId, location)
                     val locationString = if (location != null) "https://maps.google.com/?q=${location.latitude},${location.longitude}" else "Location unavailable."
-                    sendSosMessages(emergencyType, vitalContext, customTemplate, locationString, contacts, call112, prefs)
+                    sendSosMessages(emergencyType, vitalContext, customTemplate, locationString, contacts, call112, prefs, alertId)
                 }
                 .addOnFailureListener {
                     // don't let a location lookup failure mean the SOS never goes out at all
-                    sendSosMessages(emergencyType, vitalContext, customTemplate, "Location unavailable.", contacts, call112, prefs)
+                    sendSosMessages(emergencyType, vitalContext, customTemplate, "Location unavailable.", contacts, call112, prefs, alertId)
                 }
         } else {
             // no location permission at all - still send what we can
-            sendSosMessages(emergencyType, vitalContext, customTemplate, "Location unavailable.", contacts, call112, prefs)
+            sendSosMessages(emergencyType, vitalContext, customTemplate, "Location unavailable.", contacts, call112, prefs, alertId)
         }
     }
 
     private fun sendSosMessages(
         emergencyType: String, vitalContext: String, customTemplate: String, locationString: String,
-        contacts: List<String>, call112: Boolean, prefs: android.content.SharedPreferences
+        contacts: List<String>, call112: Boolean, prefs: android.content.SharedPreferences, alertId: String
     ) {
+        // TODO: replace with your real Firebase Hosting URL if this ever changes
+        val dashboardLink = "https://twowayalert-b6cc1.web.app/alert.html?id=$alertId"
+
         val finalMessage = if (customTemplate.isNotBlank()) {
-            "$customTemplate\nType: $emergencyType\nContext: $vitalContext\nLoc: $locationString"
+            "$customTemplate\nType: $emergencyType\nContext: $vitalContext\nLive tracking: $dashboardLink"
         } else {
-            "SOS ALERT: $emergencyType\nContext: $vitalContext\nLoc: $locationString"
+            "SOS ALERT: $emergencyType\nContext: $vitalContext\nLive tracking: $dashboardLink"
         }
 
         val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) getSystemService(SmsManager::class.java) else SmsManager.getDefault()
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
-            for (number in contacts) { try { smsManager.sendTextMessage(number, null, finalMessage, null, null) } catch (e: Exception) { e.printStackTrace() } }
+            for (number in contacts) {
+                try {
+                    // divideMessage/sendMultipartTextMessage instead of sendTextMessage —
+                    // this message is longer than 160 chars once the dashboard link is
+                    // included, and sendTextMessage alone would silently truncate it.
+                    val parts = smsManager.divideMessage(finalMessage)
+                    smsManager.sendMultipartTextMessage(number, null, parts, null, null)
+                } catch (e: Exception) { e.printStackTrace() }
+            }
             Toast.makeText(this, "SMS Sent!", Toast.LENGTH_SHORT).show()
+            addFirestoreTimelineEvent(alertId, "SOS sent to ${contacts.size} contact(s)")
         }
 
         val numberToCall = if (call112) "112" else contacts.first()
@@ -480,12 +501,14 @@ class MainActivity : ComponentActivity() {
         }
 
         HistoryStore.add(prefs, SosHistoryEntry(System.currentTimeMillis(), emergencyType, locationString))
-        startPeriodicTrackingIfEnabled(prefs, contacts, smsManager)
+        startPeriodicTrackingIfEnabled(prefs, contacts, smsManager, alertId)
     }
 
     // Sends a follow-up location SMS every N seconds (from the profile setting) for 10 minutes, so responders
-    // can keep tabs on movement after the initial alert. Stops automatically, or immediately if cancelCountdown() runs.
-    private fun startPeriodicTrackingIfEnabled(prefs: android.content.SharedPreferences, contacts: List<String>, smsManager: SmsManager) {
+// can keep tabs on movement after the initial alert. Stops automatically, or immediately if cancelCountdown() runs.
+    private fun startPeriodicTrackingIfEnabled(
+        prefs: android.content.SharedPreferences, contacts: List<String>, smsManager: SmsManager, alertId: String
+    ) {
         val intervalSeconds = prefs.getString("trackingIntervalSeconds", "0")?.toIntOrNull() ?: 0
         if (intervalSeconds <= 0) return
 
@@ -501,6 +524,7 @@ class MainActivity : ComponentActivity() {
 
                 if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                     fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                        updateFirestoreLocation(alertId, location) // <-- keeps the dashboard map moving
                         val locationString = if (location != null) "https://maps.google.com/?q=${location.latitude},${location.longitude}" else "Location unavailable."
                         val trackingMessage = "Tracking Update: still in progress.\nLoc: $locationString"
                         if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
@@ -513,7 +537,61 @@ class MainActivity : ComponentActivity() {
         }
         handler.postDelayed(runnable, intervalSeconds * 1000L)
     }
+    private fun createFirestoreAlert(alertId: String, emergencyType: String, vitalContext: String, prefs: android.content.SharedPreferences) {
+        val alertDoc = hashMapOf(
+            "userName" to (prefs.getString("userName", "") ?: ""),
+            "userAge" to (prefs.getString("userAge", "") ?: ""),
+            "vitalContext" to vitalContext,
+            "emergencyType" to emergencyType,
+            "status" to "active",
+            "createdAt" to Timestamp.now()
+        )
+        retryOnAuthFailure {
+            FirebaseFirestore.getInstance().collection("sosAlerts").document(alertId).set(alertDoc)
+        }
+        addFirestoreTimelineEvent(alertId, "SOS Triggered: $emergencyType")
+    }
 
+    private fun addFirestoreTimelineEvent(alertId: String, label: String) {
+        retryOnAuthFailure {
+            FirebaseFirestore.getInstance()
+                .collection("sosAlerts").document(alertId).collection("timeline")
+                .add(hashMapOf("label" to label, "timestamp" to Timestamp.now()))
+        }
+    }
+
+    private fun updateFirestoreLocation(alertId: String, location: android.location.Location?) {
+        if (location == null) return
+        val db = FirebaseFirestore.getInstance()
+        retryOnAuthFailure {
+            db.collection("sosAlerts").document(alertId).set(
+                hashMapOf("lastLocation" to hashMapOf(
+                    "lat" to location.latitude, "lng" to location.longitude, "updatedAt" to System.currentTimeMillis()
+                )),
+                SetOptions.merge()
+            )
+        }
+        retryOnAuthFailure {
+            db.collection("sosAlerts").document(alertId).collection("locationHistory").add(
+                hashMapOf("lat" to location.latitude, "lng" to location.longitude, "timestamp" to Timestamp.now())
+            )
+        }
+    }
+
+    // Retries a Firestore write once, after forcing a fresh auth token, if the
+// first attempt fails with PERMISSION_DENIED — covers the narrow race where
+// a write fires right after sign-in, before Firestore's credentials
+// pipeline has picked up the new token yet.
+    private fun <T> retryOnAuthFailure(write: () -> com.google.android.gms.tasks.Task<T>) {
+        write().addOnFailureListener { e ->
+            val isPermissionDenied = (e as? com.google.firebase.firestore.FirebaseFirestoreException)
+                ?.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED
+            if (isPermissionDenied) {
+                FirebaseAuth.getInstance().currentUser?.getIdToken(true)
+                    ?.addOnSuccessListener { write() }
+            }
+        }
+    }
     private fun triggerShortVibration() {
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator else @Suppress("DEPRECATION") getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createOneShot(300, VibrationEffect.DEFAULT_AMPLITUDE)) else @Suppress("DEPRECATION") vibrator.vibrate(300)
