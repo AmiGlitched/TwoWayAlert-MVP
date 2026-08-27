@@ -23,6 +23,7 @@ object HistoryStore {
                         obj.optLong("timestamp", 0L),
                         obj.optString("type", "SOS Triggered"),
                         obj.optString("location", "Location unavailable."),
+                        obj.optString("alertId", "")
                     )
                 )
             }
@@ -43,6 +44,7 @@ object HistoryStore {
             obj.put("timestamp", e.timestamp)
             obj.put("type", e.type)
             obj.put("location", e.location)
+            obj.put("alertId", e.alertId)
             arr.put(obj)
         }
         prefs.edit { putString(KEY, arr.toString()) }
