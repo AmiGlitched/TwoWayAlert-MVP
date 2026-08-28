@@ -114,6 +114,7 @@ import android.util.Log
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import com.google.firebase.Timestamp
+import androidx.core.content.edit
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 class MainActivity : ComponentActivity() {
@@ -468,40 +469,122 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sendSosMessages(
-        emergencyType: String, vitalContext: String, customTemplate: String, locationString: String,
-        contacts: List<String>, call112: Boolean, prefs: android.content.SharedPreferences, alertId: String
+        emergencyType: String,
+        vitalContext: String,
+        customTemplate: String,
+        locationString: String,
+        contacts: List<String>,
+        call112: Boolean,
+        prefs: android.content.SharedPreferences,
+        alertId : String
     ) {
-        // TODO: replace with your real Firebase Hosting URL if this ever changes
-        val dashboardLink = "https://twowayalert-b6cc1.web.app/alert.html?id=$alertId"
 
         val finalMessage = if (customTemplate.isNotBlank()) {
-            "$customTemplate\nType: $emergencyType\nContext: $vitalContext\nLive tracking: $dashboardLink"
+            "$customTemplate\nType: $emergencyType\nContext: $vitalContext\nLocation: $locationString"
         } else {
-            "SOS ALERT: $emergencyType\nContext: $vitalContext\nLive tracking: $dashboardLink"
+            "SOS ALERT: $emergencyType\nContext: $vitalContext\nLocation: $locationString"
+        }
+        var uid = FirebaseAuth.getInstance().currentUser?.uid
+        if (uid == null) {uid = "unknown_user"}
+
+        val locationRegex = Regex("""[-+]?[0-9]*\.?[0-9]+""")
+        val coordinates = locationRegex
+            .findAll(locationString)
+            .map { it.value.toDoubleOrNull() }
+            .filterNotNull()
+            .toList()
+
+        val latitude = coordinates.getOrNull(0) ?: 0.0
+        val longitude = coordinates.getOrNull(1) ?: 0.0
+
+        fun ReadableText(text: String): String{
+            return text
+                .replace("/","Or", ignoreCase = true)
+                .replace("'", "", ignoreCase = true)
+                .replace(Regex("[^A-Za-z0-9]"), "")
+
         }
 
-        val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) getSystemService(SmsManager::class.java) else SmsManager.getDefault()
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
-            for (number in contacts) {
-                try {
-                    // divideMessage/sendMultipartTextMessage instead of sendTextMessage —
-                    // this message is longer than 160 chars once the dashboard link is
-                    // included, and sendTextMessage alone would silently truncate it.
-                    val parts = smsManager.divideMessage(finalMessage)
-                    smsManager.sendMultipartTextMessage(number, null, parts, null, null)
-                } catch (e: Exception) { e.printStackTrace() }
-            }
-            Toast.makeText(this, "SMS Sent!", Toast.LENGTH_SHORT).show()
-            addFirestoreTimelineEvent(alertId, "SOS sent to ${contacts.size} contact(s)")
-        }
+        val sosAlertManager = SosAlertManager()
 
-        val numberToCall = if (call112) "112" else contacts.first()
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
-            startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:$numberToCall")))
-        }
+        sosAlertManager.createAnAlert(
+            senderId = uid,
+            message = finalMessage,
+            latitude = latitude,
+            longitude = longitude,
 
-        HistoryStore.add(prefs, SosHistoryEntry(System.currentTimeMillis(), emergencyType, locationString))
-        startPeriodicTrackingIfEnabled(prefs, contacts, smsManager, alertId)
+            onSuccess = { alertId ->
+
+                prefs.edit{ putString("activeAlertId", alertId) }
+
+                var userName = prefs.getString("userName", "")
+                if (userName == null){userName= "User"}
+                val readableSosType = ReadableText(emergencyType)
+                val readableUserName = ReadableText(userName)
+
+                val primaryLink = "https://two-way-alert-app.web.app/${readableUserName}/sos/$readableSosType/$alertId?contact=primary"
+                val secondaryLink = "https://two-way-alert-app.web.app/${readableUserName}/sos/$readableSosType/$alertId?contact=secondary"
+
+                val SecondaryContact = contacts.getOrNull(1)
+                val serviceIntent = Intent(this, SosForegroundService::class.java).apply{
+                    action = SosForegroundService.ACTION_START_SECONDARY_LISTENER
+                    putExtra("ALERT_ID", alertId)
+                    putExtra("SECONDARY_CONTACT", SecondaryContact)
+                    putExtra("FINAL_MESSAGE", finalMessage)
+                    putExtra("SECONDARY_LINK", secondaryLink)
+                }
+                if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S){
+                    startForegroundService(serviceIntent)
+                }else{
+                    startService(serviceIntent)
+                }
+
+
+                FirebaseFirestore.getInstance()
+                    .collection("alerts")
+                    .document(alertId)
+                    .update(mapOf(
+                        "primaryLink" to primaryLink,
+                        "secondaryLink" to secondaryLink))
+
+
+                val smsManager =
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        getSystemService(SmsManager::class.java)
+                    } else {
+                        SmsManager.getDefault()
+                    }
+                val primaryContact = contacts.getOrNull(0)
+                if (primaryContact != null) {
+                    val smsMessage =
+                        "$finalMessage\n\nOpen emergency alert:\n$primaryLink"
+
+                    val smsSent = SmsSender.sendSms(
+                        context = this,
+                        message = smsMessage,
+                        contacts = listOf(primaryContact),
+                        alertId = alertId,
+                        sentContact = "primary"
+                    )
+
+                    if (smsSent) {
+                        Toast.makeText(this, "SOS SMS sent to Primary Contact", Toast.LENGTH_LONG).show()
+                    }
+                }
+
+                // Existing 112 call functionality
+                val numberToCall = if (call112) "112" else contacts.firstOrNull()
+
+                if (numberToCall != null && ActivityCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                    startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:$numberToCall")))
+                }
+
+                HistoryStore.add(prefs, SosHistoryEntry(System.currentTimeMillis(), emergencyType, locationString, alertId = alertId))
+                startPeriodicTrackingIfEnabled(prefs, contacts, smsManager, alertId)
+            },
+
+            onError = { exception -> Toast.makeText(this, "Could not create SOS alert", Toast.LENGTH_SHORT).show() }
+        )
     }
 
     // Sends a follow-up location SMS every N seconds (from the profile setting) for 10 minutes, so responders
@@ -1258,6 +1341,12 @@ fun HistoryScreen(prefs: android.content.SharedPreferences) {
     var entries by remember { mutableStateOf(HistoryStore.load(prefs)) }
     val dateFormat = remember { SimpleDateFormat("MMM d, yyyy - h:mm a", Locale.getDefault()) }
 
+    var enter by remember { mutableStateOf<SosHistoryEntry?>(null) }
+    if(enter != null){
+        AlertDetails(entry = enter!!, onBack = {enter = null}, prefs= prefs)
+        return
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(CanvasDeep).padding(24.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("SOS History", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
@@ -1272,7 +1361,8 @@ fun HistoryScreen(prefs: android.content.SharedPreferences) {
         } else {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 entries.forEach { entry ->
-                    GlassPanel(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                    GlassPanel(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp).clickable{enter = entry })
+                    {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(entry.type, color = AccentRed, fontWeight = FontWeight.Bold)
                             Text(dateFormat.format(Date(entry.timestamp)), color = TextSecondary, fontSize = 12.sp)
@@ -1280,7 +1370,193 @@ fun HistoryScreen(prefs: android.content.SharedPreferences) {
                         }
                     }
                 }
+            }
                 Spacer(modifier = Modifier.height(110.dp)) // clears the floating pill nav bar
+            }
+        }
+    }
+
+@Composable
+fun AlertDetails(entry: SosHistoryEntry, onBack: () -> Unit, prefs: android.content.SharedPreferences) {
+    var data by remember { mutableStateOf<Map<String, Any>?>(null) }
+    var loading by remember { mutableStateOf(true) }
+    val dateFormat = remember { SimpleDateFormat("MMM d, yyyy - h:mm a", Locale.getDefault()) }
+
+    LaunchedEffect(entry.alertId) {
+
+        FirebaseFirestore.getInstance()
+            .collection("alerts")
+            .document(entry.alertId)
+            .get()
+            .addOnSuccessListener { document ->
+
+                if (document.exists()) {
+                    data = document.data
+                }
+                loading = false
+            }
+            .addOnFailureListener { exception ->
+                loading = false
+            }
+    }
+
+    fun time(field: String): Long {
+        return (data?.get(field) as? Number)?.toLong() ?: 0L
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(CanvasDeep).padding(24.dp).verticalScroll(rememberScrollState())) {
+        TextButton(onClick = onBack) {
+            Text("← Go Back", color = TextPrimary)
+        }
+        Text("Alert Details", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+        Spacer(modifier = Modifier.height(20.dp))
+
+        if (loading) {
+            Text("Loading alert details and timeline.", color = TextSecondary)
+        } else if (data == null) {
+            Text("ERROR: Alert details not found.", color = AccentRed)
+        } else {
+            Text("Type: ${entry.type}", color = AccentRed, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Spacer(modifier = Modifier.height(6.dp))
+            Text("Alert ID: ${entry.alertId}", color = TextSecondary, fontSize = 12.sp)
+            Spacer(modifier = Modifier.height(25.dp))
+
+            val contacts = ContactStore.load(prefs)
+            var primaryContactName = contacts.getOrNull(0)?.name
+            if (primaryContactName == null){ primaryContactName = "Primary Contact Name"}
+            Text("PRIMARY CONTACT ALERT TRACKING: $primaryContactName", fontSize = 21.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+            if(primaryContactName.isNullOrBlank()){
+                Toast.makeText(LocalContext.current, "Please input Primary Contact Name and Phone number", Toast.LENGTH_LONG).show()
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            var primaryResponse =   data?.get("primaryResponse")as? String
+            if (primaryResponse == null){
+                primaryResponse = "No Response Yet"
+            }
+            var alertSecondary = false
+            if(primaryResponse == "Primary Contact Unavailable. \nAlert Secondary Contact Now!"){
+                alertSecondary = true
+            }
+
+            AlertTimeline(
+                sentAt = time("primarySentAt"),
+                deliveredAt = time("primaryDeliveredAt"),
+                seenAt = time("primarySeenAt"),
+                respondedAt = time("primaryRespondedAt"),
+                resolvedAt = time("primaryEmergencyResolvedAt"),
+                dateFormat = dateFormat,
+                response = primaryResponse,
+                resolvedField = !alertSecondary
+            )
+
+
+            Spacer(modifier = Modifier.height(50.dp))
+            if (alertSecondary) {
+                Column(modifier = Modifier.padding(start = 50.dp)) {
+                    if (primaryResponse == "Primary Contact Unavailable. \nAlert Secondary Contact Now!") {
+                        var secondaryResponseSelected = data?.get("secondaryResponse") as? String
+                        if (secondaryResponseSelected == null){secondaryResponseSelected = "No response yet"}
+
+                        val contacts = ContactStore.load(prefs)
+                        var secondaryContactName = contacts.getOrNull(1)?.name
+                        if (secondaryContactName == null) {secondaryContactName = "Secondary Contact Name"}
+
+                        if(secondaryContactName.isNullOrBlank()){
+                            Toast.makeText(LocalContext.current, "Please input Secondary Contact Name and Phone number", Toast.LENGTH_LONG).show()
+                        }
+
+
+                        Text("SECONDARY CONTACT ALERT TRACKING: $secondaryContactName", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        var secondaryResponseDisplay = data?.get("secondaryResponse") as? String
+                        if (secondaryResponseDisplay == null) { secondaryResponseDisplay = "No response yet"}
+
+                        AlertTimeline(
+                            sentAt = time("secondarySentAt"),
+                            deliveredAt = time("secondaryDeliveredAt"),
+                            seenAt = time("secondarySeenAt"),
+                            respondedAt = time("secondaryRespondedAt"),
+                            resolvedAt = time("secondaryEmergencyResolvedAt"),
+                            dateFormat = dateFormat,
+                            response = secondaryResponseDisplay,
+                            resolvedField = true
+                        )
+
+                        Spacer(modifier = Modifier.height(80.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlertTimeline(sentAt: Long, deliveredAt: Long, seenAt: Long, respondedAt: Long, resolvedAt: Long, dateFormat: SimpleDateFormat, resolvedField: Boolean, response : String) {
+    val readReceipts = mutableListOf(
+        "Sent" to sentAt,
+        "Delivered" to deliveredAt,
+        "Seen" to seenAt,
+        "Responded: $response" to respondedAt
+    )
+
+    if(resolvedField){
+        readReceipts.add("Emergency Resolved" to resolvedAt)
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+
+        readReceipts.forEachIndexed { i, readReceipt ->
+
+            val title = readReceipt.first
+            val timestamp = readReceipt.second
+            val fieldCompleted = timestamp > 0L
+            val nextFieldCompleted = if(i < readReceipts.lastIndex){
+                readReceipts[i+1].second > 0L
+            } else{
+                false
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+
+                Column(horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.width(28.dp)) {
+
+                    Box(modifier = Modifier.size(14.dp).background(
+                        color =
+                            if (fieldCompleted) { Color.Green }
+                            else { Color.Transparent },
+                        shape = CircleShape).border(width = 2.dp,
+                        color =
+                            if (fieldCompleted) { Color.Green }
+                            else{ Color.Gray },
+                        shape = CircleShape)
+                    )
+
+                    if (i < readReceipts.lastIndex) {
+                        Box(modifier = Modifier.width(3.dp).height(80.dp).background(color =
+                            if (fieldCompleted && nextFieldCompleted){
+                                Color.Green}
+                            else{
+                                Color.Gray }
+                        )
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier) { Text(title, fontSize = 16.sp,
+                    fontWeight =
+                        if(fieldCompleted){ FontWeight.Bold}
+                        else { FontWeight.Normal},
+                    color = TextPrimary)
+
+                    Text(if (fieldCompleted) { dateFormat.format(Date(timestamp)) }
+                    else { "Not yet" },
+                        fontSize = 12.sp, color = TextSecondary
+                    )
+                }
             }
         }
     }

@@ -23,6 +23,12 @@ import com.myapplication.app.ml.FallDetectionModel
 import com.myapplication.app.utils.Preprocessor
 import kotlin.math.sqrt
 import android.util.Log
+import com.google.firebase.firestore.DocumentChange
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.QuerySnapshot
+import com.myapplication.app.utils.ContactStore
 
 class SosForegroundService : Service(), SensorEventListener {
 
@@ -46,6 +52,7 @@ class SosForegroundService : Service(), SensorEventListener {
         const val NOTIFICATION_ID_FALL_DETECTION = 2
         const val NOTIFICATION_ID_POST_FALL_VOICE_MONITORING = 3
         const val NOTIFICATION_ID_CONTINUOUS_VOICE_MONITORING = 4
+        const val ACTION_START_SECONDARY_LISTENER = "ACTION_START_SECONDARY_LISTENER"
     }
 
     private lateinit var sensorManager: SensorManager
@@ -73,6 +80,8 @@ class SosForegroundService : Service(), SensorEventListener {
     private var sensorRegistered = false
     private var pause = false
     private var postFallPause = false
+
+    private var alertListener: ListenerRegistration? = null
 
 
     private val screenStateReceiver = object : BroadcastReceiver() {
@@ -104,6 +113,8 @@ class SosForegroundService : Service(), SensorEventListener {
                 error-> Log.e("VOSK", error)
             }
         )
+
+        listener()
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -142,6 +153,17 @@ class SosForegroundService : Service(), SensorEventListener {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 return START_NOT_STICKY
+            }
+
+            ACTION_START_SECONDARY_LISTENER -> {
+                val alertId = intent.getStringExtra("ALERT_ID")
+                val secondaryContact = intent.getStringExtra("SECONDARY_CONTACT")
+                val finalMessage = intent.getStringExtra("FINAL_MESSAGE")
+                val secondaryLink = intent.getStringExtra("SECONDARY_LINK")
+
+                if (!alertId.isNullOrBlank() && !finalMessage.isNullOrBlank()){
+                    listener()
+                }
             }
 
         }
@@ -359,6 +381,109 @@ class SosForegroundService : Service(), SensorEventListener {
 
         }
     }
+
+
+    private fun listener(){
+        val uid = FirebaseAuth.getInstance().currentUser?.uid
+
+        if (uid == null) {
+            return
+        }
+
+        alertListener?.remove()
+        val db = FirebaseFirestore.getInstance()
+
+        alertListener = db.collection("alerts")
+            .whereEqualTo("senderId", uid)
+            .addSnapshotListener { snapshots, error ->
+
+                if (error != null || snapshots == null) {
+                    return@addSnapshotListener
+                }
+                checkChanges(snapshots)
+            }
+    }
+
+
+    private fun checkChanges(snapshots: QuerySnapshot){
+        for (change in snapshots.documentChanges) {
+            if (change.type != DocumentChange.Type.MODIFIED) {
+                continue
+            }
+
+            val document = change.document
+            var alertedSecondaryContactAt = document.getLong("primaryAlertedSecondaryContactAt")
+            if (alertedSecondaryContactAt == null) { alertedSecondaryContactAt = 0L}
+
+
+            var  secondarySentAt = document.getLong("secondarySentAt")
+            if (secondarySentAt == null) { secondarySentAt = 0L}
+
+            if (alertedSecondaryContactAt > 0L && secondarySentAt == 0L) {
+                val prefs = getSharedPreferences("AppPrefs", MODE_PRIVATE)
+                val contacts = ContactStore.load(prefs)
+                val secondaryContact = contacts.getOrNull(1)
+                val phoneNumber = secondaryContact?.phone
+                if (phoneNumber.isNullOrBlank()) {
+                    continue
+                }
+                sendSmsToSecondary(phoneNumber = phoneNumber, alertId =document.id, data =document.data)
+            }
+        }
+    }
+
+
+
+    private fun sendSmsToSecondary(phoneNumber: String, alertId: String, data: Map<String, Any>) {
+
+        val prefs = getSharedPreferences("AppPrefs", MODE_PRIVATE)
+        val contacts = ContactStore.load(prefs)
+        if(alertId == null || alertId.isBlank() || phoneNumber.isBlank()){
+            return
+        }
+
+        var SmsAlert = data["message"]
+        if (SmsAlert== null) { SmsAlert = "SOS ALERT"}
+        val link = data["secondaryLink"] as? String ?: ""
+
+        var longitudeValue = data["longitude"] as? Number
+        val longitude = if (longitudeValue == null){
+            longitudeValue = null
+        }else{
+            longitudeValue.toDouble()
+        }
+
+        var latitudeValue = data["latitude"] as? Number
+        val latitude = if (latitudeValue == null){
+            latitudeValue = null
+        }else{
+            latitudeValue.toDouble()
+        }
+
+
+        val smsMessage = buildString {
+            append(SmsAlert)
+
+            if (latitude != null && longitude != null) {
+                append("\n\nLocation: ")
+                append("https://maps.google.com/?q=")
+                append(latitude)
+                append(",")
+                append(longitude)
+            }
+
+            if (link.isNotBlank()) {
+                append("\n\nOpen emergency alert:\n")
+                append(link)
+            }
+        }
+
+        val smsSent = SmsSender.sendSms(context = this, message = smsMessage, contacts = listOf(phoneNumber), alertId = alertId, sentContact = "secondary")
+        if (smsSent){Toast.makeText(this, "ALERT MESSAGE SENT TO SECONDARY CONTACT SUCCESSFULLY!", Toast.LENGTH_SHORT).show()}
+    }
+
+
+
     private fun buildNotification(): Notification {
 
         val prefs = getSharedPreferences("AppPrefs", MODE_PRIVATE)
@@ -451,6 +576,8 @@ class SosForegroundService : Service(), SensorEventListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        alertListener?.remove()
+        alertListener = null
         sensorManager.unregisterListener(this)
         fallModel?.close()
         voiceRecognitionManager.release()
